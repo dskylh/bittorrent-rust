@@ -1,5 +1,5 @@
 use serde_json;
-use std::{env, iter::Peekable, str::Chars};
+use std::{collections::BTreeMap, env, iter::Peekable, str::Chars};
 
 // Available if you need it!
 // use serde_bencode
@@ -8,6 +8,7 @@ enum BencodeValue {
     ByteString(String),
     Integer(i64),
     List(Vec<BencodeValue>),
+    Dictionary(BTreeMap<String, BencodeValue>),
 }
 
 impl BencodeValue {
@@ -52,6 +53,22 @@ impl BencodeValue {
 
         Some(BencodeValue::List(values))
     }
+    fn from_bencoded_dictionary(chars: &mut Peekable<Chars>) -> Option<Self> {
+        chars.next();
+        let mut dict = BTreeMap::new();
+        while let Some(cur) = chars.peek() {
+            if *cur != 'e' {
+                let k: serde_json::Value = decode_bencoded_value(chars).unwrap().into();
+                let key = k.to_string();
+                let value = decode_bencoded_value(chars).unwrap();
+                dict.insert(key, value);
+            } else {
+                break;
+            }
+        }
+
+        Some(BencodeValue::Dictionary(dict))
+    }
 }
 
 impl Into<serde_json::Value> for BencodeValue {
@@ -66,6 +83,13 @@ impl Into<serde_json::Value> for BencodeValue {
                 }
                 serde_json::Value::Array(vec)
             }
+            BencodeValue::Dictionary(dict) => {
+                let mut map = serde_json::Map::new();
+                for (key, val) in dict {
+                    map.insert(key, val.into());
+                }
+                serde_json::Value::Object(map)
+            }
         }
     }
 }
@@ -79,6 +103,8 @@ fn decode_bencoded_value(chars: &mut Peekable<Chars>) -> Option<BencodeValue> {
         BencodeValue::from_bencoded_integer(chars)
     } else if *chars.peek().unwrap() == 'l' {
         BencodeValue::from_bencoded_list(chars)
+    } else if *chars.peek().unwrap() == 'd' {
+        BencodeValue::from_bencoded_dictionary(chars)
     } else {
         panic!("Unhandled encoded value")
     }
