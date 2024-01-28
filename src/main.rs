@@ -24,7 +24,7 @@ fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
                 break;
             }
         }
-        return serde_json::Value::String(number);
+        return serde_json::Value::Number(number.parse().unwrap());
     } else {
         panic!("Unhandled encoded value: {}", encoded_value)
     }
