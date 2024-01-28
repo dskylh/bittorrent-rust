@@ -1,4 +1,3 @@
-use hex::encode;
 use serde_json;
 use std::env;
 
@@ -18,7 +17,6 @@ fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
         return serde_json::Value::String(string.to_string());
     } else if encoded_value.chars().next().unwrap() == 'i' {
         let mut number = String::new();
-        chars.next();
         while let Some(cur) = chars.next() {
             if cur != 'e' {
                 number.push(cur);
