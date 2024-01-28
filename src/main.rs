@@ -1,21 +1,33 @@
 use serde_json;
-use std::env;
+use std::{env, iter::Peekable, str::Chars};
 
 // Available if you need it!
 // use serde_bencode
 
-#[allow(dead_code)]
-fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
-    // If encoded_value starts with a digit, it's a number
-    let mut chars = encoded_value.chars();
-    if chars.next().unwrap().is_digit(10) {
-        // Example: "5:hello" -> "hello"
-        let colon_index = encoded_value.find(':').unwrap();
-        let number_string = &encoded_value[..colon_index];
-        let number = number_string.parse::<i64>().unwrap();
-        let string = &encoded_value[colon_index + 1..colon_index + 1 + number as usize];
-        return serde_json::Value::String(string.to_string());
-    } else if encoded_value.chars().next().unwrap() == 'i' {
+enum BencodeValue {
+    ByteString(String),
+    Integer(i64),
+    List(Vec<BencodeValue>),
+}
+
+impl BencodeValue {
+    fn from_bencoded_string(chars: &mut Peekable<Chars>) -> Option<Self> {
+        let mut index = String::new();
+        while let Some(cur) = chars.next() {
+            if cur != ':' {
+                index.push(cur);
+            } else {
+                break;
+            }
+        }
+        let index = index.parse().unwrap();
+        let string: String = chars.take(index).collect();
+
+        Some(BencodeValue::ByteString(string))
+    }
+
+    fn from_bencoded_integer(chars: &mut Peekable<Chars>) -> Option<Self> {
+        chars.next();
         let mut number = String::new();
         while let Some(cur) = chars.next() {
             if cur != 'e' {
@@ -24,9 +36,51 @@ fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
                 break;
             }
         }
-        return serde_json::Value::Number(number.parse().unwrap());
+        Some(BencodeValue::Integer(number.parse().unwrap()))
+    }
+
+    fn from_bencoded_list(chars: &mut Peekable<Chars>) -> Option<Self> {
+        chars.next();
+        let mut values = Vec::new();
+        while let Some(cur) = chars.peek() {
+            if *cur != 'e' {
+                values.push(decode_bencoded_value(chars).unwrap());
+            } else {
+                break;
+            }
+        }
+
+        Some(BencodeValue::List(values))
+    }
+}
+
+impl Into<serde_json::Value> for BencodeValue {
+    fn into(self) -> serde_json::Value {
+        match self {
+            BencodeValue::ByteString(string) => serde_json::Value::String(string),
+            BencodeValue::Integer(number) => serde_json::Value::Number(number.into()),
+            BencodeValue::List(list) => {
+                let mut vec: Vec<serde_json::Value> = Vec::new();
+                for val in list {
+                    vec.push(val.into());
+                }
+                serde_json::Value::Array(vec)
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn decode_bencoded_value(chars: &mut Peekable<Chars>) -> Option<BencodeValue> {
+    // If encoded_value starts with a digit, it's a number
+    if chars.peek().unwrap().is_digit(10) {
+        BencodeValue::from_bencoded_string(chars)
+    } else if *chars.peek().unwrap() == 'i' {
+        BencodeValue::from_bencoded_integer(chars)
+    } else if *chars.peek().unwrap() == 'l' {
+        BencodeValue::from_bencoded_list(chars)
     } else {
-        panic!("Unhandled encoded value: {}", encoded_value)
+        panic!("Unhandled encoded value")
     }
 }
 
@@ -41,8 +95,10 @@ fn main() {
 
         // Uncomment this block to pass the first stage
         let encoded_value = &args[2];
-        let decoded_value = decode_bencoded_value(encoded_value);
-        println!("{}", decoded_value.to_string());
+        let mut chars: Peekable<Chars<'_>> = encoded_value.chars().peekable();
+        let decoded_value = decode_bencoded_value(&mut chars).unwrap();
+        let result: serde_json::Value = decoded_value.into();
+        println!("{}", result.to_string());
     } else {
         println!("unknown command: {}", args[1])
     }
