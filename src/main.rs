@@ -1,5 +1,5 @@
 use serde_json;
-use std::{collections::BTreeMap, env, iter::Peekable, str::Chars};
+use std::{collections::HashMap, env, iter::Peekable, str::Chars};
 
 // Available if you need it!
 // use serde_bencode
@@ -8,7 +8,30 @@ enum BencodeValue {
     ByteString(String),
     Integer(i64),
     List(Vec<BencodeValue>),
-    Dictionary(BTreeMap<String, BencodeValue>),
+    Dictionary(serde_json::Map<String, serde_json::Value>),
+}
+
+impl Into<serde_json::Value> for BencodeValue {
+    fn into(self) -> serde_json::Value {
+        match self {
+            BencodeValue::ByteString(string) => serde_json::Value::String(string),
+            BencodeValue::Integer(number) => serde_json::Value::Number(number.into()),
+            BencodeValue::List(list) => {
+                let mut vec: Vec<serde_json::Value> = Vec::new();
+                for val in list {
+                    vec.push(val.into());
+                }
+                serde_json::Value::Array(vec)
+            }
+            BencodeValue::Dictionary(dict) => {
+                let mut map = serde_json::Map::new();
+                for (key, val) in dict {
+                    map.insert(key, val);
+                }
+                serde_json::Value::Object(map)
+            }
+        }
+    }
 }
 
 impl BencodeValue {
@@ -53,44 +76,24 @@ impl BencodeValue {
 
         Some(BencodeValue::List(values))
     }
+
     fn from_bencoded_dictionary(chars: &mut Peekable<Chars>) -> Option<Self> {
         chars.next();
-        let mut dict = BTreeMap::new();
+        let mut dict = serde_json::Map::new();
         while let Some(cur) = chars.peek() {
             if *cur != 'e' {
                 let k: serde_json::Value = decode_bencoded_value(chars).unwrap().into();
-                let key = k.to_string();
-                let value = decode_bencoded_value(chars).unwrap();
-                dict.insert(key, value);
+                let v: serde_json::Value = decode_bencoded_value(chars).unwrap().into();
+                let key: String = k.to_string();
+                let key = key.strip_prefix('"').unwrap();
+                let key = key.strip_suffix('"').unwrap();
+                dict.insert(key.to_string(), v);
             } else {
                 break;
             }
         }
 
         Some(BencodeValue::Dictionary(dict))
-    }
-}
-
-impl Into<serde_json::Value> for BencodeValue {
-    fn into(self) -> serde_json::Value {
-        match self {
-            BencodeValue::ByteString(string) => serde_json::Value::String(string),
-            BencodeValue::Integer(number) => serde_json::Value::Number(number.into()),
-            BencodeValue::List(list) => {
-                let mut vec: Vec<serde_json::Value> = Vec::new();
-                for val in list {
-                    vec.push(val.into());
-                }
-                serde_json::Value::Array(vec)
-            }
-            BencodeValue::Dictionary(dict) => {
-                let mut map = serde_json::Map::new();
-                for (key, val) in dict {
-                    map.insert(key, val.into());
-                }
-                serde_json::Value::Object(map)
-            }
-        }
     }
 }
 
