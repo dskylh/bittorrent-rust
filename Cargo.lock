@@ -104,6 +104,12 @@ dependencies = [
 
 [[package]]
 name = "base64"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
+
+[[package]]
+name = "base64"
 version = "0.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "604178f6c5c21f02dc555784810edfb88d34ac2c73b2eae109655649ee73ce3d"
@@ -125,6 +131,7 @@ name = "bittorrent-starter-rust"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.13.1",
  "bytes",
  "clap",
  "hex",
@@ -827,7 +834,7 @@ version = "0.11.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cde824a14b7c14f85caff81225f411faacc04a2013f41670f41443742b1c1c55"
 dependencies = [
- "base64",
+ "base64 0.21.2",
  "bytes",
  "encoding_rs",
  "futures-core",
