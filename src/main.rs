@@ -2,7 +2,6 @@ use base64::encode;
 use serde::{Deserialize, Serialize};
 use serde_bencode::to_bytes;
 use serde_json::{self};
-use sha1::digest::FixedOutput;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -10,8 +9,6 @@ use std::fs::{self};
 use std::slice::Iter;
 use std::u8;
 use std::{env, iter::Peekable};
-// Available if you need it!
-// use serde_bencode
 
 #[derive(Deserialize, Serialize)]
 enum BencodeValue {
@@ -31,17 +28,22 @@ impl Display for BencodeValue {
                 write!(f, "({})", int)
             }
             BencodeValue::List(list) => {
-                // write a debug way to show this type
-                write!(f, "[");
-                for val in list {
-                    write!(f, "{}", val);
+                write!(f, "[")?;
+                for (index, item) in list.iter().enumerate() {
+                    if index != 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", item)?;
                 }
                 write!(f, "]")
             }
             BencodeValue::Dictionary(dict) => {
-                write!(f, "{{");
-                for (key, val) in dict {
-                    write!(f, "{}: {}", key, val);
+                write!(f, "{{")?;
+                for (index, (key, value)) in dict.iter().enumerate() {
+                    if index != 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", key, value)?;
                 }
                 write!(f, "}}")
             }
@@ -126,7 +128,10 @@ impl BencodeValue {
                 let key: String = k.to_string();
                 let key = key.strip_prefix('"').unwrap();
                 let key = key.strip_suffix('"').unwrap();
+
+                println!("key: {}, value: {}", key, v);
                 dict.insert(key.to_string(), v);
+                // print out the dict
             } else {
                 break;
             }
@@ -143,16 +148,10 @@ impl BencodeValue {
                 let info = dict.get("info").unwrap();
                 println!("{}", info);
                 let mut hasher: Sha1 = Sha1::new();
-                // let bencoded_info = serde_bencode::to_bytes(&info.as_u64()).unwrap();
-                let bencoded_info = to_bytes(info).unwrap();
+                let bencoded_info = to_bytes(&info).unwrap();
                 println!("{:?}", bencoded_info);
-                // let debug_info =
-                //     decode_bencoded_value(&mut bencoded_info.to_vec().iter().peekable());
-                // let debug_info: serde_json::Value = debug_info.unwrap().into();
-                // println!("{debug_info}");
                 hasher.update(bencoded_info.clone());
-                let hashed_info = hasher.finalize_fixed();
-                // println!("{}");
+                let hashed_info = hasher.finalize();
                 return Some((announce, length.to_string(), hashed_info.to_vec()));
             }
             _ => return None,
