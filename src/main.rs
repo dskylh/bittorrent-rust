@@ -1,16 +1,17 @@
-use base64::encode;
+use anyhow::Context;
+use serde::de::Error;
 use serde::{Deserialize, Serialize};
 use serde_bencode::to_bytes;
 use serde_json::{self};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
-use std::fmt::Display;
 use std::fs::{self};
 use std::slice::Iter;
+use std::str::from_utf8;
 use std::u8;
 use std::{env, iter::Peekable};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 enum BencodeValue {
     ByteString(Vec<u8>),
     Integer(i64),
@@ -18,66 +19,7 @@ enum BencodeValue {
     Dictionary(HashMap<String, BencodeValue>),
 }
 
-impl Display for BencodeValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BencodeValue::ByteString(str) => {
-                write!(f, "({:?})", str)
-            }
-            BencodeValue::Integer(int) => {
-                write!(f, "({})", int)
-            }
-            BencodeValue::List(list) => {
-                write!(f, "[")?;
-                for (index, item) in list.iter().enumerate() {
-                    if index != 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", item)?;
-                }
-                write!(f, "]")
-            }
-            BencodeValue::Dictionary(dict) => {
-                write!(f, "{{")?;
-                for (index, (key, value)) in dict.iter().enumerate() {
-                    if index != 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", key, value)?;
-                }
-                write!(f, "}}")
-            }
-        }
-    }
-}
-
-impl Into<serde_json::Value> for BencodeValue {
-    fn into(self) -> serde_json::Value {
-        match self {
-            BencodeValue::ByteString(string) => {
-                let base64_string = encode(&string);
-                serde_json::Value::String(base64_string)
-            }
-            BencodeValue::Integer(number) => serde_json::Value::Number(number.into()),
-            BencodeValue::List(list) => {
-                let mut vec: Vec<serde_json::Value> = Vec::new();
-                for val in list {
-                    vec.push(val.into());
-                }
-                serde_json::Value::Array(vec)
-            }
-            BencodeValue::Dictionary(dict) => {
-                let mut map = serde_json::Map::new();
-                for (key, val) in dict {
-                    map.insert(key, val.into());
-                }
-                serde_json::Value::Object(map)
-            }
-        }
-    }
-}
-
-impl BencodeValue {
+impl<'a> BencodeValue {
     fn from_bencoded_string(chars: &mut Peekable<std::slice::Iter<u8>>) -> Option<Self> {
         let mut index = String::new();
         while let Some(cur) = chars.next() {
@@ -123,13 +65,15 @@ impl BencodeValue {
         let mut dict = HashMap::new();
         while let Some(cur) = chars.peek() {
             if **cur != b'e' {
-                let k: serde_json::Value = decode_bencoded_value(chars).unwrap().into();
+                let mut k = String::new();
+                if let Self::ByteString(value) = decode_bencoded_value(chars).unwrap() {
+                    k = from_utf8(&value).unwrap().to_string();
+                };
                 let v = decode_bencoded_value(chars).unwrap();
-                let key: String = k.to_string();
-                let key = key.strip_prefix('"').unwrap();
+                let key = k.strip_prefix('"').unwrap();
                 let key = key.strip_suffix('"').unwrap();
 
-                println!("key: {}, value: {}", key, v);
+                println!("{:?}", dict);
                 dict.insert(key.to_string(), v);
                 // print out the dict
             } else {
@@ -140,22 +84,109 @@ impl BencodeValue {
         Some(BencodeValue::Dictionary(dict))
     }
 
-    fn get_info(&self) -> Option<(String, String, Vec<u8>)> {
-        match self {
-            BencodeValue::Dictionary(dict) => {
-                let announce: String = dict.get("announce").unwrap().to_string();
-                let length = dict.get("info").unwrap();
-                let info = dict.get("info").unwrap();
-                println!("{}", info);
-                let mut hasher: Sha1 = Sha1::new();
-                let bencoded_info = to_bytes(&info).unwrap();
-                println!("{:?}", bencoded_info);
-                hasher.update(bencoded_info.clone());
-                let hashed_info = hasher.finalize();
-                return Some((announce, length.to_string(), hashed_info.to_vec()));
+    // fn get_info(&self) -> Option<(BencodeValue, BencodeValue, Vec<u8>)> {
+    //     match self {
+    //         BencodeValue::Dictionary(dict) => {
+    //             let announce = dict.get("announce").unwrap();
+    //             let length = dict.get("info").unwrap();
+    //             let info = dict.get("info").unwrap();
+    //             println!("{:?}", info);
+    //             let mut hasher: Sha1 = Sha1::new();
+    //             let bencoded_info = to_bytes(&info).unwrap();
+    //             println!("{:?}", bencoded_info);
+    //             hasher.update(bencoded_info.clone());
+    //             let hashed_info = hasher.finalize();
+    //             return Some((announce, length, hashed_info.to_vec()));
+    //         }
+    //         _ => return None,
+    //     }
+    // }
+}
+
+fn parse_torrent_file<'a>(chars: &mut Peekable<Iter<u8>>) -> TorrentFile<'a> {
+    let decoded_value = decode_bencoded_value(chars);
+    let mut announce: Option<&str> = None;
+    let mut length: Option<u64> = None;
+    let mut name: Option<&str> = None;
+    let mut piece_length: Option<u64> = None;
+    let mut pieces: Option<&[u8]> = None;
+
+    if let BencodeValue::Dictionary(dict) = decoded_value.unwrap() {
+        if let BencodeValue::ByteString(s) = dict.get("announce").unwrap() {
+            announce = Some(from_utf8(&s).unwrap());
+        };
+
+        if let BencodeValue::Dictionary(info) = dict.get("info").unwrap() {
+            if let BencodeValue::Integer(n) = info.get("length").unwrap() {
+                length = Some(n.to_owned() as u64);
             }
-            _ => return None,
+
+            if let BencodeValue::ByteString(s) = info.get("name").unwrap() {
+                name = Some(from_utf8(&s).unwrap());
+            }
+
+            if let BencodeValue::Integer(n) = info.get("piece length").unwrap() {
+                piece_length = Some(n.to_owned() as u64);
+            }
+
+            if let BencodeValue::ByteString(s) = info.get("pieces").unwrap() {
+                pieces = Some(s);
+            }
         }
+    }
+    TorrentFile {
+        announce: announce.unwrap(),
+        info: TorrentFileInfo {
+            length: length.unwrap(),
+            name: name.unwrap(),
+            piece_length: piece_length.unwrap(),
+            pieces: pieces.unwrap(),
+        },
+    }
+}
+
+//     fn get_info(&self) -> Option<(BencodeValue, BencodeValue, Vec<u8>)> {
+//         match self {
+//             BencodeValue::Dictionary(dict) => {
+//                 let announce = dict.get("announce").unwrap();
+//                 let length = dict.get("info").unwrap();
+//                 let info = dict.get("info").unwrap();
+//                 println!("{:?}", info);
+//                 let mut hasher: Sha1 = Sha1::new();
+//                 let bencoded_info = to_bytes(&info).unwrap();
+//                 println!("{:?}", bencoded_info);
+//                 hasher.update(bencoded_info.clone());
+//                 let hashed_info = hasher.finalize();
+//                 return Some((announce, length, hashed_info.to_vec()));
+//             }
+//             _ => return None,
+//         }
+//     }
+// }
+
+pub struct TorrentFile<'input> {
+    pub announce: &'input str,
+    pub info: TorrentFileInfo<'input>,
+}
+
+#[derive(Serialize)]
+
+pub struct TorrentFileInfo<'input> {
+    pub name: &'input str,
+    #[serde(rename = "piece length")]
+    pub piece_length: u64,
+    #[serde(with = "serde_bytes")]
+    pub pieces: &'input [u8],
+    pub length: u64,
+}
+
+impl<'input> TorrentFileInfo<'input> {
+    pub fn hash(&self) -> String {
+        let bencoded_info_dictionary = serde_bencode::to_bytes(&self).unwrap();
+        let mut hasher = Sha1::new();
+        hasher.update(bencoded_info_dictionary);
+        let hash = hasher.finalize();
+        hex::encode(hash)
     }
 }
 
