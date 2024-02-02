@@ -1,8 +1,5 @@
-use anyhow::Context;
-use serde::de::Error;
 use serde::{Deserialize, Serialize};
-use serde_bencode::to_bytes;
-use serde_json::{self};
+use serde_json::{self, json};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs::{self};
@@ -70,11 +67,11 @@ impl<'a> BencodeValue {
                     k = from_utf8(&value).unwrap().to_string();
                 };
                 let v = decode_bencoded_value(chars).unwrap();
-                let key = k.strip_prefix('"').unwrap();
-                let key = key.strip_suffix('"').unwrap();
+                // let key = k.strip_prefix('"').unwrap();
+                // let key = key.strip_suffix('"').unwrap();
 
-                println!("{:?}", dict);
-                dict.insert(key.to_string(), v);
+                // println!("{:?}", dict);
+                dict.insert(k, v);
                 // print out the dict
             } else {
                 break;
@@ -84,36 +81,98 @@ impl<'a> BencodeValue {
         Some(BencodeValue::Dictionary(dict))
     }
 
-    // fn get_info(&self) -> Option<(BencodeValue, BencodeValue, Vec<u8>)> {
-    //     match self {
-    //         BencodeValue::Dictionary(dict) => {
-    //             let announce = dict.get("announce").unwrap();
-    //             let length = dict.get("info").unwrap();
-    //             let info = dict.get("info").unwrap();
-    //             println!("{:?}", info);
-    //             let mut hasher: Sha1 = Sha1::new();
-    //             let bencoded_info = to_bytes(&info).unwrap();
-    //             println!("{:?}", bencoded_info);
-    //             hasher.update(bencoded_info.clone());
-    //             let hashed_info = hasher.finalize();
-    //             return Some((announce, length, hashed_info.to_vec()));
-    //         }
-    //         _ => return None,
-    //     }
-    // }
+    fn into_json(&self) -> Option<serde_json::Value> {
+        return Some(match self {
+            Self::ByteString(bytes) => {
+                json!(from_utf8(&bytes).unwrap())
+            }
+
+            BencodeValue::Integer(n) => json!(n),
+
+            BencodeValue::List(arr) => {
+                let collected: Vec<serde_json::Value> = arr
+                    .into_iter()
+                    .map(|item| item.into_json().unwrap())
+                    .collect();
+
+                serde_json::Value::Array(collected)
+            }
+
+            BencodeValue::Dictionary(dict) => {
+                let mut map: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+
+                for (key, value) in dict.iter() {
+                    map.insert(key.clone(), value.into_json().unwrap());
+                }
+
+                serde_json::Value::Object(map)
+            }
+        });
+    }
 }
 
-fn parse_torrent_file<'a>(chars: &mut Peekable<Iter<u8>>) -> TorrentFile<'a> {
+struct TorrentFile {
+    pub announce: String,
+    pub info: TorrentFileInfo,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TorrentFileInfo {
+    pub name: String,
+    #[serde(rename = "piece length")]
+    pub piece_length: u64,
+    #[serde(with = "serde_bytes")]
+    pub pieces: Vec<u8>,
+    pub length: u64,
+}
+
+impl TorrentFileInfo {
+    fn hash(&self) -> String {
+        let bencoded_info_dictionary = serde_bencode::to_bytes(&self).unwrap();
+        let mut hasher = Sha1::new();
+        hasher.update(bencoded_info_dictionary);
+        let hash = hasher.finalize();
+        hex::encode(hash)
+    }
+
+    // fn url_encoded_hash_info(&self) -> Result<String, Box<dyn std::error::Error>> {
+    //     Ok(self
+    //         .hash_no_hex()
+    //         .iter()
+    //         .fold("".to_string(), |mut acc, byte| {
+    //             acc.push_str("%");
+    //             acc.push_str(&hex::encode(byte));
+    //             acc
+    //         }))
+    // }
+
+    fn hash_no_hex(&self) -> Result<[u8; 20], Box<dyn std::error::Error>> {
+        let bencoded_info_dictionary = serde_bencode::to_bytes(&self).unwrap();
+        let mut hasher = Sha1::new();
+        hasher.update(bencoded_info_dictionary);
+        Ok(hasher.finalize().into())
+    }
+
+    fn hash_pieces(&self) -> Vec<String> {
+        let mut hashed_pieces = Vec::new();
+        for piece in self.pieces.chunks(20) {
+            hashed_pieces.push(hex::encode(piece));
+        }
+        hashed_pieces
+    }
+}
+
+fn parse_torrent_file(chars: &mut Peekable<Iter<u8>>) -> TorrentFile {
     let decoded_value = decode_bencoded_value(chars);
-    let mut announce: Option<&str> = None;
+    let mut announce: Option<String> = None;
     let mut length: Option<u64> = None;
-    let mut name: Option<&str> = None;
+    let mut name: Option<String> = None;
     let mut piece_length: Option<u64> = None;
-    let mut pieces: Option<&[u8]> = None;
+    let mut pieces: Option<Vec<u8>> = None;
 
     if let BencodeValue::Dictionary(dict) = decoded_value.unwrap() {
         if let BencodeValue::ByteString(s) = dict.get("announce").unwrap() {
-            announce = Some(from_utf8(&s).unwrap());
+            announce = Some(from_utf8(s).unwrap().to_owned());
         };
 
         if let BencodeValue::Dictionary(info) = dict.get("info").unwrap() {
@@ -122,7 +181,7 @@ fn parse_torrent_file<'a>(chars: &mut Peekable<Iter<u8>>) -> TorrentFile<'a> {
             }
 
             if let BencodeValue::ByteString(s) = info.get("name").unwrap() {
-                name = Some(from_utf8(&s).unwrap());
+                name = Some(from_utf8(&s).unwrap().to_owned());
             }
 
             if let BencodeValue::Integer(n) = info.get("piece length").unwrap() {
@@ -130,7 +189,7 @@ fn parse_torrent_file<'a>(chars: &mut Peekable<Iter<u8>>) -> TorrentFile<'a> {
             }
 
             if let BencodeValue::ByteString(s) = info.get("pieces").unwrap() {
-                pieces = Some(s);
+                pieces = Some(s.to_vec());
             }
         }
     }
@@ -142,51 +201,6 @@ fn parse_torrent_file<'a>(chars: &mut Peekable<Iter<u8>>) -> TorrentFile<'a> {
             piece_length: piece_length.unwrap(),
             pieces: pieces.unwrap(),
         },
-    }
-}
-
-//     fn get_info(&self) -> Option<(BencodeValue, BencodeValue, Vec<u8>)> {
-//         match self {
-//             BencodeValue::Dictionary(dict) => {
-//                 let announce = dict.get("announce").unwrap();
-//                 let length = dict.get("info").unwrap();
-//                 let info = dict.get("info").unwrap();
-//                 println!("{:?}", info);
-//                 let mut hasher: Sha1 = Sha1::new();
-//                 let bencoded_info = to_bytes(&info).unwrap();
-//                 println!("{:?}", bencoded_info);
-//                 hasher.update(bencoded_info.clone());
-//                 let hashed_info = hasher.finalize();
-//                 return Some((announce, length, hashed_info.to_vec()));
-//             }
-//             _ => return None,
-//         }
-//     }
-// }
-
-pub struct TorrentFile<'input> {
-    pub announce: &'input str,
-    pub info: TorrentFileInfo<'input>,
-}
-
-#[derive(Serialize)]
-
-pub struct TorrentFileInfo<'input> {
-    pub name: &'input str,
-    #[serde(rename = "piece length")]
-    pub piece_length: u64,
-    #[serde(with = "serde_bytes")]
-    pub pieces: &'input [u8],
-    pub length: u64,
-}
-
-impl<'input> TorrentFileInfo<'input> {
-    pub fn hash(&self) -> String {
-        let bencoded_info_dictionary = serde_bencode::to_bytes(&self).unwrap();
-        let mut hasher = Sha1::new();
-        hasher.update(bencoded_info_dictionary);
-        let hash = hasher.finalize();
-        hex::encode(hash)
     }
 }
 
@@ -205,6 +219,45 @@ fn decode_bencoded_value(chars: &mut Peekable<Iter<u8>>) -> Option<BencodeValue>
         panic!("Unhandled encoded value")
     }
 }
+// fn hash_encode(t: String) -> String {
+//     let encoded: String = t.chars().map(|b| format!("%{:02x}", b)).collect();
+//     encoded
+// }
+
+fn hash_encode(t: &str) -> String {
+    let bytes = hex::decode(t).unwrap_or_default();
+    let encoded: String = bytes.iter().map(|b| format!("%{:02x}", b)).collect();
+    encoded
+}
+
+fn parse_response(bencode: BencodeValue) -> String {
+    if let BencodeValue::Dictionary(dict) = bencode {
+        println!("{:?}", dict.get("min interval"));
+    }
+    return String::new();
+}
+
+fn tracker_get(torrent_file: TorrentFile) -> Result<BencodeValue, reqwest::Error> {
+    let mut url = torrent_file.announce;
+    let left = torrent_file.info.length.to_string();
+    let info_hash = hash_encode(&torrent_file.info.hash());
+
+    url.push_str(&format!("?info_hash={}", info_hash));
+    url.push_str("&peer_id=00112233445566778899");
+    url.push_str("&port=6881");
+    url.push_str("&uploaded=0");
+    url.push_str("&downloaded=0");
+    url.push_str(&format!("&left={}", left));
+    url.push_str("&compact=1");
+
+    println!("{url}");
+    let response = reqwest::blocking::get(url);
+    let binding = response.unwrap().text().unwrap();
+    let mut response = binding.as_bytes().iter().peekable();
+    let response = decode_bencoded_value(&mut response).unwrap();
+
+    Ok(response)
+}
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() {
@@ -220,18 +273,33 @@ fn main() {
 
         let mut chars = encoded_value.as_bytes().iter().peekable();
         let decoded_value = decode_bencoded_value(&mut chars).unwrap();
-        let result: serde_json::Value = decoded_value.into();
+        let result: serde_json::Value = decoded_value.into_json().unwrap();
         println!("{}", result.to_string());
     } else if command == "info" {
         let file_path = &args[2];
         let contents = fs::read(file_path).unwrap();
         let mut chars = contents.iter().peekable();
-        let decoded_value = decode_bencoded_value(&mut chars).unwrap();
+        // let decoded_value = decode_bencoded_value(&mut chars).unwrap();
         // let result: serde_json::Value = decoded_value.into();
-        let (announce, length, info) = decoded_value.get_info().unwrap();
-        println!("Tracker URL: {}", announce);
-        println!("Length: {}", length);
-        println!("Info: {:?}", hex::encode(info));
+        let torrent_file = parse_torrent_file(&mut chars);
+        let hashed_pieces = torrent_file.info.hash_pieces();
+        println!("Tracker Url: {}", torrent_file.announce);
+        println!("Length: {}", torrent_file.info.length);
+        println!("Info Hash: {}", torrent_file.info.hash());
+        println!("Piece Length: {}", torrent_file.info.piece_length);
+        println!("Piece Hashes:");
+        for hashed_piece in &hashed_pieces {
+            println!("{:?}", hashed_piece);
+        }
+    } else if command == "peers" {
+        let file_path = &args[2];
+        let contents = fs::read(file_path).unwrap();
+        let mut chars = contents.iter().peekable();
+        // let decoded_value = decode_bencoded_value(&mut chars).unwrap();
+        // let result: serde_json::Value = decoded_value.into();
+        let torrent_file = parse_torrent_file(&mut chars);
+        let tracker = tracker_get(torrent_file);
+        parse_response(tracker.unwrap());
     } else {
         println!("unknown command: {}", args[1])
     }
