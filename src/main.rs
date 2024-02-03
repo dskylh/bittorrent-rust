@@ -1,8 +1,10 @@
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs::{self};
+use std::net::Ipv4Addr;
 use std::slice::Iter;
 use std::str::from_utf8;
 use std::u8;
@@ -62,7 +64,7 @@ impl<'a> BencodeValue {
         let mut dict = HashMap::new();
         while let Some(cur) = chars.peek() {
             if **cur != b'e' {
-                let mut k = String::new();
+                let mut k: String = String::new();
                 if let Self::ByteString(value) = decode_bencoded_value(chars).unwrap() {
                     k = from_utf8(&value).unwrap().to_string();
                 };
@@ -133,24 +135,6 @@ impl TorrentFileInfo {
         hasher.update(bencoded_info_dictionary);
         let hash = hasher.finalize();
         hex::encode(hash)
-    }
-
-    // fn url_encoded_hash_info(&self) -> Result<String, Box<dyn std::error::Error>> {
-    //     Ok(self
-    //         .hash_no_hex()
-    //         .iter()
-    //         .fold("".to_string(), |mut acc, byte| {
-    //             acc.push_str("%");
-    //             acc.push_str(&hex::encode(byte));
-    //             acc
-    //         }))
-    // }
-
-    fn hash_no_hex(&self) -> Result<[u8; 20], Box<dyn std::error::Error>> {
-        let bencoded_info_dictionary = serde_bencode::to_bytes(&self).unwrap();
-        let mut hasher = Sha1::new();
-        hasher.update(bencoded_info_dictionary);
-        Ok(hasher.finalize().into())
     }
 
     fn hash_pieces(&self) -> Vec<String> {
@@ -230,14 +214,74 @@ fn hash_encode(t: &str) -> String {
     encoded
 }
 
-fn parse_response(bencode: BencodeValue) -> String {
-    if let BencodeValue::Dictionary(dict) = bencode {
-        println!("{:?}", dict.get("min interval"));
-    }
-    return String::new();
+#[allow(dead_code)]
+#[derive(Debug)]
+struct Peer {
+    ip_addr: Ipv4Addr,
+    port: u16,
 }
 
-fn tracker_get(torrent_file: TorrentFile) -> Result<BencodeValue, reqwest::Error> {
+impl Peer {
+    fn to_string(&self) -> String {
+        format!("{}:{}", self.ip_addr, self.port)
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct TorrentResponse {
+    interval: u64,
+    peers: Vec<Peer>,
+    complete: u64,
+    incomplete: u64,
+    min_interval: u64,
+}
+
+fn parse_response(bencode: BencodeValue) -> TorrentResponse {
+    let mut interval: Option<u64> = None;
+    let mut complete: Option<u64> = None;
+    let mut incomplete: Option<u64> = None;
+    let mut min_interval: Option<u64> = None;
+    let mut peers: Option<Vec<Peer>> = None;
+
+    if let BencodeValue::Dictionary(dict) = bencode {
+        if let BencodeValue::Integer(n) = dict.get("interval").unwrap() {
+            interval = Some(n.to_owned() as u64);
+        }
+
+        if let BencodeValue::Integer(n) = dict.get("complete").unwrap() {
+            complete = Some(n.to_owned() as u64);
+        }
+
+        if let BencodeValue::Integer(n) = dict.get("incomplete").unwrap() {
+            incomplete = Some(n.to_owned() as u64);
+        }
+
+        if let BencodeValue::Integer(n) = dict.get("min interval").unwrap() {
+            min_interval = Some(n.to_owned() as u64);
+        }
+
+        if let BencodeValue::ByteString(p) = dict.get("peers").unwrap() {
+            let mut vec = vec![];
+            for chunk in p.chunks(6) {
+                vec.push(Peer {
+                    ip_addr: Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]),
+                    port: u16::from_be_bytes([chunk[4], chunk[5]]),
+                })
+            }
+            peers = Some(vec);
+        }
+    }
+    TorrentResponse {
+        interval: interval.unwrap(),
+        min_interval: min_interval.unwrap(),
+        incomplete: incomplete.unwrap(),
+        complete: complete.unwrap(),
+        peers: peers.unwrap(),
+    }
+}
+
+fn tracker_get(torrent_file: TorrentFile) -> Result<Bytes, reqwest::Error> {
     let mut url = torrent_file.announce;
     let left = torrent_file.info.length.to_string();
     let info_hash = hash_encode(&torrent_file.info.hash());
@@ -250,11 +294,11 @@ fn tracker_get(torrent_file: TorrentFile) -> Result<BencodeValue, reqwest::Error
     url.push_str(&format!("&left={}", left));
     url.push_str("&compact=1");
 
-    println!("{url}");
-    let response = reqwest::blocking::get(url);
-    let binding = response.unwrap().text().unwrap();
-    let mut response = binding.as_bytes().iter().peekable();
-    let response = decode_bencoded_value(&mut response).unwrap();
+    let response = reqwest::blocking::get(url).unwrap().bytes().unwrap();
+    // println!("{:?}", response.to_string());
+
+    // let mut response = binding.as_bytes().iter().peekable();
+    // let response = decode_bencoded_value(&mut response).unwrap();
 
     Ok(response)
 }
@@ -298,8 +342,13 @@ fn main() {
         // let decoded_value = decode_bencoded_value(&mut chars).unwrap();
         // let result: serde_json::Value = decoded_value.into();
         let torrent_file = parse_torrent_file(&mut chars);
-        let tracker = tracker_get(torrent_file);
-        parse_response(tracker.unwrap());
+        let tracker = tracker_get(torrent_file).unwrap();
+        // println!("{:?}", tracker);
+        let bencode_tracker = decode_bencoded_value(&mut tracker.iter().peekable());
+        let parsed_response = parse_response(bencode_tracker.unwrap());
+        for peer in parsed_response.peers {
+            println!("{}", peer.to_string());
+        }
     } else {
         println!("unknown command: {}", args[1])
     }

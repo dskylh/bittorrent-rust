@@ -19,7 +19,7 @@
                     "kind": "bin"
                 }
             },
-            "args": ["info", "sample.torrent"],
+            "args": ["peers", "sample.torrent"],
             "cwd": "${workspaceFolder}"
         },
         {
