@@ -4,7 +4,9 @@ use serde_json::{self, json};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs::{self};
+use std::io::{Read, Write};
 use std::net::Ipv4Addr;
+use std::net::{SocketAddr, TcpStream};
 use std::slice::Iter;
 use std::str::from_utf8;
 use std::u8;
@@ -135,6 +137,14 @@ impl TorrentFileInfo {
         hasher.update(bencoded_info_dictionary);
         let hash = hasher.finalize();
         hex::encode(hash)
+    }
+
+    fn hash_nohex(&self) -> Vec<u8> {
+        let bencoded_info_dictionary = serde_bencode::to_bytes(&self).unwrap();
+        let mut hasher = Sha1::new();
+        hasher.update(bencoded_info_dictionary);
+        let hash = hasher.finalize();
+        return hash.to_vec();
     }
 
     fn hash_pieces(&self) -> Vec<String> {
@@ -303,6 +313,23 @@ fn tracker_get(torrent_file: TorrentFile) -> Result<Bytes, reqwest::Error> {
     Ok(response)
 }
 
+fn tcp_handshake(peer: &str, info_hash: Vec<u8>) {
+    let mut stream = TcpStream::connect(peer).unwrap();
+
+    let mut message: Vec<u8> = Vec::new();
+    message.push(19);
+    message.extend_from_slice("BitTorrent protocol".as_bytes());
+    message.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+    message.extend(info_hash);
+    message.extend_from_slice("00112233445566778899".as_bytes());
+
+    stream.write(&message).unwrap();
+    let mut buffer = [0; 68];
+    let bytes_read = stream.read(&mut buffer[..]).unwrap();
+    let response = buffer[..bytes_read][48..].to_vec();
+    println!("Server response: {:?}", hex::encode(response));
+}
+
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -349,6 +376,15 @@ fn main() {
         for peer in parsed_response.peers {
             println!("{}", peer.to_string());
         }
+    } else if command == "handshake" {
+        let file_path = &args[2];
+        let contents = fs::read(file_path).unwrap();
+        let mut chars = contents.iter().peekable();
+        // let decoded_value = decode_bencoded_value(&mut chars).unwrap();
+        // let result: serde_json::Value = decoded_value.into();
+        let torrent_file = parse_torrent_file(&mut chars);
+        let peer = &args[3];
+        tcp_handshake(peer, torrent_file.info.hash_nohex())
     } else {
         println!("unknown command: {}", args[1])
     }
