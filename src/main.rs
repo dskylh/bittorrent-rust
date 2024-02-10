@@ -1,26 +1,11 @@
+use bittorrent_starter_rust::bencode::decode_bencoded_value;
+use bittorrent_starter_rust::{tcp, torrent};
 use serde_json::{self};
+use std::env;
 use std::fs::{self};
-use std::slice::Iter;
-use std::u8;
-use std::{env, iter::Peekable};
-use torrent::{parse_response, tcp_handshake, tracker_get};
-mod bencode;
-mod torrent;
+use tcp::tcp_handshake;
+use torrent::{parse_response, tracker_get};
 
-fn decode_bencoded_value(chars: &mut Peekable<Iter<u8>>) -> Option<bencode::BencodeValue> {
-    // If encoded_value starts with a digit, it's a number
-    if chars.peek().unwrap().is_ascii_digit() {
-        bencode::BencodeValue::from_bencoded_string(chars)
-    } else if **chars.peek().unwrap() == b'i' {
-        bencode::BencodeValue::from_bencoded_integer(chars)
-    } else if **chars.peek().unwrap() == b'l' {
-        bencode::BencodeValue::from_bencoded_list(chars)
-    } else if **chars.peek().unwrap() == b'd' {
-        bencode::BencodeValue::from_bencoded_dictionary(chars)
-    } else {
-        panic!("Unhandled encoded value")
-    }
-}
 // fn hash_encode(t: String) -> String {
 //     let encoded: String = t.chars().map(|b| format!("%{:02x}", b)).collect();
 //     encoded

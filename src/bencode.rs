@@ -1,4 +1,3 @@
-use super::decode_bencoded_value;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_json::json;
@@ -16,7 +15,7 @@ pub enum BencodeValue {
 }
 
 impl<'a> BencodeValue {
-    pub(crate) fn from_bencoded_string(chars: &mut Peekable<std::slice::Iter<u8>>) -> Option<Self> {
+    pub fn from_bencoded_string(chars: &mut Peekable<std::slice::Iter<u8>>) -> Option<Self> {
         let mut index = String::new();
         while let Some(cur) = chars.next() {
             if *cur != b':' {
@@ -30,9 +29,7 @@ impl<'a> BencodeValue {
         Some(BencodeValue::ByteString(string))
     }
 
-    pub(crate) fn from_bencoded_integer(
-        chars: &mut Peekable<std::slice::Iter<u8>>,
-    ) -> Option<Self> {
+    pub fn from_bencoded_integer(chars: &mut Peekable<std::slice::Iter<u8>>) -> Option<Self> {
         chars.next();
         let mut number = String::new();
         while let Some(cur) = chars.next() {
@@ -45,7 +42,7 @@ impl<'a> BencodeValue {
         Some(BencodeValue::Integer(number.parse().unwrap()))
     }
 
-    pub(crate) fn from_bencoded_list(chars: &mut Peekable<Iter<u8>>) -> Option<Self> {
+    pub fn from_bencoded_list(chars: &mut Peekable<Iter<u8>>) -> Option<Self> {
         chars.next();
         let mut values = Vec::new();
         while let Some(cur) = chars.peek() {
@@ -58,7 +55,7 @@ impl<'a> BencodeValue {
         Some(BencodeValue::List(values))
     }
 
-    pub(crate) fn from_bencoded_dictionary(chars: &mut Peekable<Iter<u8>>) -> Option<Self> {
+    pub fn from_bencoded_dictionary(chars: &mut Peekable<Iter<u8>>) -> Option<Self> {
         chars.next();
         let mut dict = HashMap::new();
         while let Some(cur) = chars.peek() {
@@ -82,7 +79,7 @@ impl<'a> BencodeValue {
         Some(BencodeValue::Dictionary(dict))
     }
 
-    pub(crate) fn into_json(&self) -> Option<serde_json::Value> {
+    pub fn into_json(&self) -> Option<serde_json::Value> {
         return Some(match self {
             Self::ByteString(bytes) => {
                 json!(from_utf8(&bytes).unwrap())
@@ -109,5 +106,20 @@ impl<'a> BencodeValue {
                 serde_json::Value::Object(map)
             }
         });
+    }
+}
+
+pub fn decode_bencoded_value(chars: &mut Peekable<Iter<u8>>) -> Option<BencodeValue> {
+    // If encoded_value starts with a digit, it's a number
+    if chars.peek().unwrap().is_ascii_digit() {
+        BencodeValue::from_bencoded_string(chars)
+    } else if **chars.peek().unwrap() == b'i' {
+        BencodeValue::from_bencoded_integer(chars)
+    } else if **chars.peek().unwrap() == b'l' {
+        BencodeValue::from_bencoded_list(chars)
+    } else if **chars.peek().unwrap() == b'd' {
+        BencodeValue::from_bencoded_dictionary(chars)
+    } else {
+        panic!("Unhandled encoded value")
     }
 }
