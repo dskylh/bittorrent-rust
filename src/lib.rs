@@ -1,4 +1,5 @@
 pub mod bencode;
+pub mod handshake;
 pub mod message;
-pub mod tcp;
+pub mod peer;
 pub mod torrent;

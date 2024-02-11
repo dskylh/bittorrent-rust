@@ -1,6 +1,7 @@
 use crate::bencode;
 use crate::bencode::decode_bencoded_value;
 use bytes::Bytes;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha1::Digest;
 use sha1::Sha1;
@@ -9,6 +10,7 @@ use std::net::Ipv4Addr;
 use std::slice::Iter;
 use std::str::from_utf8;
 
+#[derive(Clone)]
 pub struct TorrentFile {
     pub announce: String,
     pub info: TorrentFileInfo,
@@ -35,7 +37,7 @@ impl Peer {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TorrentFileInfo {
     pub name: String,
     #[serde(rename = "piece length")]
@@ -113,21 +115,85 @@ pub fn parse_torrent_file(chars: &mut Peekable<Iter<u8>>) -> TorrentFile {
     }
 }
 
+pub struct Tracker {
+    url: String,
+    left: String,
+    info_hash: String,
+    peer_id: String,
+    port: u16,
+    uploaded: u64,
+    downloaded: u64,
+    compact: bool,
+}
+
+impl Tracker {
+    pub fn new(
+        url: String,
+        left: String,
+        info_hash: String,
+        peer_id: String,
+        port: u16,
+        uploaded: u64,
+        downloaded: u64,
+        compact: bool,
+    ) -> Self {
+        Self {
+            url,
+            left,
+            info_hash,
+            peer_id,
+            port,
+            uploaded,
+            downloaded,
+            compact,
+        }
+    }
+
+    pub fn build_url(&self) -> String {
+        // build a url from the Tracker self
+        let mut base_url = self.url.clone();
+        let info_hash = format!("?info_hash={}", &self.info_hash);
+        base_url.push_str(&info_hash);
+        let mut url = Url::parse(&base_url).unwrap();
+        let compact = self.compact as u8;
+        let mut binding = url.query_pairs_mut();
+        let final_url = binding
+            .append_pair("peer_id", &self.peer_id)
+            .append_pair("port", &self.port.to_string())
+            .append_pair("uploaded", &self.uploaded.to_string())
+            .append_pair("downloaded", &self.downloaded.to_string())
+            .append_pair("left", &self.left)
+            .append_pair("compact", &compact.to_string());
+        let final_url = final_url.finish().to_string();
+        println!("{}", &final_url);
+        return final_url;
+    }
+}
+
 pub fn tracker_get(torrent_file: TorrentFile) -> Result<Bytes, reqwest::Error> {
-    let mut url = torrent_file.announce;
+    let url = torrent_file.announce;
     let left = torrent_file.info.length.to_string();
     let info_hash = hash_encode(&torrent_file.info.hash());
-
-    url.push_str(&format!("?info_hash={}", info_hash));
-    url.push_str("&peer_id=00112233445566778899");
-    url.push_str("&port=6881");
-    url.push_str("&uploaded=0");
-    url.push_str("&downloaded=0");
-    url.push_str(&format!("&left={}", left));
-    url.push_str("&compact=1");
-
-    let response = reqwest::blocking::get(url).unwrap().bytes().unwrap();
-    // println!("{:?}", response.to_string());
+    let peer_id = "00112233445566778899";
+    let port = 6881;
+    let uploaded = 0;
+    let downloaded = 0;
+    let compact = true;
+    let tracker = Tracker::new(
+        url,
+        left,
+        info_hash,
+        peer_id.to_string(),
+        port,
+        uploaded,
+        downloaded,
+        compact,
+    );
+    let response = reqwest::blocking::get(tracker.build_url())
+        .unwrap()
+        .bytes()
+        .unwrap();
+    println!("{:?}", response);
 
     // let mut response = binding.as_bytes().iter().peekable();
     // let response = decode_bencoded_value(&mut response).unwrap();

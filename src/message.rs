@@ -1,4 +1,5 @@
-enum MessageId {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageId {
     Choke = 0,
     Unchoke = 1,
     Interested = 2,
@@ -26,7 +27,9 @@ impl From<u8> for MessageId {
         }
     }
 }
+
+#[derive(Debug)]
 pub struct Message {
-    MessageId: MessageId,
-    Payload: Vec<u8>,
+    pub message_id: MessageId,
+    pub payload: Vec<u8>,
 }
