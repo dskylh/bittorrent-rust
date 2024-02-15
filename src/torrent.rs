@@ -1,5 +1,6 @@
 use crate::bencode;
 use crate::bencode::decode_bencoded_value;
+use crate::handshake::tcp_handshake;
 use bytes::Bytes;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,7 @@ use sha1::Digest;
 use sha1::Sha1;
 use std::iter::Peekable;
 use std::net::Ipv4Addr;
+use std::net::TcpStream;
 use std::slice::Iter;
 use std::str::from_utf8;
 
@@ -14,6 +16,36 @@ use std::str::from_utf8;
 pub struct TorrentFile {
     pub announce: String,
     pub info: TorrentFileInfo,
+}
+
+impl TorrentFile {
+    pub fn show_info(&self) {
+        let hashed_pieces = self.info.hash_pieces();
+        println!("Tracker Url: {}", self.announce);
+        println!("Length: {}", self.info.length);
+        println!("Info Hash: {}", self.info.hash());
+        println!("Piece Length: {}", self.info.piece_length);
+        println!("Pieces: {}", self.info.pieces.len());
+        println!("Piece Hashes:");
+        for hashed_piece in &hashed_pieces {
+            println!("{:?}", hashed_piece);
+        }
+    }
+
+    pub fn peers(&self) -> Vec<Peer> {
+        let tracker = tracker_get(self.clone()).unwrap();
+        let bencode_tracker = decode_bencoded_value(&mut tracker.iter().peekable());
+        let parsed_response = parse_response(bencode_tracker.unwrap());
+        let peers = parsed_response.peers;
+        peers
+    }
+    pub fn perform_handshake(&self) -> TcpStream {
+        let tracker = tracker_get(self.clone()).unwrap();
+        let bencode_tracker = decode_bencoded_value(&mut tracker.iter().peekable());
+        let parsed_response = parse_response(bencode_tracker.unwrap());
+        let peer = parsed_response.peers[0].to_string();
+        tcp_handshake(&peer, self.info.hash_nohex())
+    }
 }
 
 #[derive(Debug)]
@@ -61,7 +93,7 @@ impl TorrentFileInfo {
         let mut hasher = Sha1::new();
         hasher.update(bencoded_info_dictionary);
         let hash = hasher.finalize();
-        return hash.to_vec();
+        hash.to_vec()
     }
 
     pub fn hash_pieces(&self) -> Vec<String> {
@@ -166,7 +198,7 @@ impl Tracker {
             .append_pair("compact", &compact.to_string());
         let final_url = final_url.finish().to_string();
         println!("{}", &final_url);
-        return final_url;
+        final_url
     }
 }
 

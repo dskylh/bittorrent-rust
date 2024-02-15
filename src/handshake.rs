@@ -41,5 +41,5 @@ pub fn tcp_handshake(peer_addr: &str, info_hash: Vec<u8>) -> TcpStream {
     let bytes_read = stream.read(&mut buffer[..]).unwrap();
     let response = buffer[..bytes_read][48..].to_vec();
     println!("Server response: {:?}", hex::encode(response));
-    return stream;
+    stream
 }

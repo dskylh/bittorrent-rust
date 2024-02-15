@@ -104,7 +104,7 @@ pub fn send_message(stream: &mut TcpStream, message: Message) {
     let _ = stream.write(&buf);
 }
 
-pub fn download(
+pub fn download_piece(
     torrent_file: TorrentFile,
     stream: &mut TcpStream,
     piece_index: u32,
@@ -147,5 +147,14 @@ pub fn download(
         block_idx += 1;
     }
     assert_eq!(all_blocks.len() as u32, piece_length);
-    return Some(all_blocks);
+    Some(all_blocks)
+}
+
+pub fn download_all(torrent_file: TorrentFile, stream: &mut TcpStream) -> Vec<u8> {
+    let total_pieces = torrent_file.info.hash_pieces().len() as u32;
+    let mut downloaded: Vec<u8> = Vec::new();
+    for idx in 0..total_pieces {
+        downloaded.extend(download_piece(torrent_file.clone(), stream, idx).unwrap());
+    }
+    downloaded
 }
