@@ -55,6 +55,13 @@ impl<'a> BencodeValue {
         Some(BencodeValue::List(values))
     }
 
+    /// Parses a dictionary from the given iterator of bytes.
+    /// 
+    /// This function assumes that the iterator points to the start of a dictionary.
+    /// It reads each key-value pair until it encounters the end marker 'e'.
+    /// Keys are converted to strings and values are decoded using the `decode_bencoded_value` function.
+    /// 
+    /// Returns `None` if the iterator does not contain a valid dictionary.
     pub fn from_bencoded_dictionary(chars: &mut Peekable<Iter<u8>>) -> Option<Self> {
         chars.next();
         let mut dict = HashMap::new();

@@ -1,11 +1,15 @@
 use crate::bencode;
 use crate::bencode::decode_bencoded_value;
 use crate::handshake::tcp_handshake;
+use crate::message::Message;
+use crate::peer::{download_piece, send_message, wait_message};
+use crate::{message::MessageId, peer::download_all};
 use bytes::Bytes;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha1::Digest;
 use sha1::Sha1;
+use std::fs;
 use std::iter::Peekable;
 use std::net::Ipv4Addr;
 use std::net::TcpStream;
@@ -45,6 +49,30 @@ impl TorrentFile {
         let parsed_response = parse_response(bencode_tracker.unwrap());
         let peer = parsed_response.peers[0].to_string();
         tcp_handshake(&peer, self.info.hash_nohex())
+    }
+
+    pub fn perform_peer_message(&self, stream: &mut TcpStream) -> Message {
+        wait_message(stream, MessageId::BitField).unwrap();
+        let interested_message = Message {
+            message_id: MessageId::Interested,
+            payload: Vec::new(),
+        };
+        send_message(stream, interested_message);
+        wait_message(stream, MessageId::Unchoke).unwrap()
+    }
+
+    pub fn download_piece(&self, piece_index: u32, output_file_path: &String) {
+        let mut stream = self.perform_handshake();
+        self.perform_peer_message(&mut stream);
+        let piece = download_piece(self.clone(), &mut stream, piece_index).unwrap();
+        let _ = fs::write(&output_file_path, piece);
+    }
+
+    pub fn download(&self, output_file_path: &String) {
+        let mut stream = self.perform_handshake();
+        self.perform_peer_message(&mut stream);
+        let piece = download_all(self.clone(), &mut stream);
+        let _ = fs::write(output_file_path, piece);
     }
 }
 
